@@ -10,10 +10,10 @@ MANDIR   = ${SHAREDIR}/man
 DISTDIR ?= dist
 
 # filename of the executable
-exe = direnv$(shell go env GOEXE)
+exe = direnv
 
-# Override the go executable
-GO = go
+# Override the cargo executable
+CARGO = cargo
 
 # BASH_PATH can also be passed to hard-code the path to bash at build time
 
@@ -31,8 +31,6 @@ help: ## Show this help message
 	@echo "Available targets:"
 	@awk 'BEGIN {FS = ":.*##"; printf "\n"} /^[a-zA-Z_-]+:.*##/ { printf "  %-20s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-export GO111MODULE=on
-
 ############################################################################
 # Build
 ############################################################################
@@ -43,40 +41,25 @@ build: direnv ## Build the direnv binary
 .PHONY: clean
 clean: ## Remove build artifacts
 	rm -rf \
-		.gopath \
+		target \
 		direnv
 
-GO_LDFLAGS =
+SOURCES = $(wildcard src/*.rs src/*/*.rs) Cargo.toml Cargo.lock stdlib.sh version.txt
 
-ifeq ($(shell uname), Darwin)
-  ifneq ($(CGO_ENABLED), 0)
-	# Fixes DYLD_INSERT_LIBRARIES issues
-	# See https://github.com/direnv/direnv/issues/194
-	GO_LDFLAGS += -linkmode=external
-  endif
-endif
-
-ifdef BASH_PATH
-	GO_LDFLAGS += -X main.bashPath=$(BASH_PATH)
-endif
-
-ifneq ($(strip $(GO_LDFLAGS)),)
-	GO_BUILD_FLAGS = -ldflags '$(GO_LDFLAGS)'
-endif
-
-SOURCES = $(wildcard *.go internal/*/*.go pkg/*/*.go)
-
+# The shell test-suite puts the repository root on $PATH and calls `direnv` by
+# name, so the binary is copied out of Cargo's target directory.
 direnv: $(SOURCES)
-	$(GO) build $(GO_BUILD_FLAGS) -o $(exe)
+	BASH_PATH=$(BASH_PATH) $(CARGO) build --release --locked
+	cp target/release/$(exe) ./$(exe)
 
 ############################################################################
 # Format all the things
 ############################################################################
-.PHONY: fmt fmt-go fmt-sh
-fmt: fmt-go fmt-sh
+.PHONY: fmt fmt-rust fmt-sh
+fmt: fmt-rust fmt-sh
 
-fmt-go:
-	$(GO) fmt
+fmt-rust:
+	$(CARGO) fmt
 
 fmt-sh:
 	@command -v shfmt >/dev/null || (echo "Could not format stdlib.sh because shfmt is missing. Run: go install mvdan.cc/sh/cmd/shfmt@latest"; false)
@@ -103,9 +86,9 @@ man: $(roffs) ## Generate man pages
 tests = \
 				test-shellcheck \
 				test-stdlib \
-				test-go \
-				test-go-lint \
-				test-go-fmt \
+				test-rust \
+				test-rust-lint \
+				test-rust-fmt \
 				test-bash \
 				test-elvish \
 				test-fish \
@@ -118,8 +101,8 @@ tests = \
 ifeq ($(shell uname), OS/390)
 	tests = \
 		test-stdlib \
-		test-go \
-		test-go-fmt \
+		test-rust \
+		test-rust-fmt \
 		test-bash
 endif
 
@@ -135,11 +118,14 @@ test-shellcheck:
 test-stdlib: build
 	./test/stdlib.bash
 
-test-go:
-	$(GO) test -v ./...
+test-rust:
+	$(CARGO) test --all-targets --locked
 
-test-go-lint:
-	golangci-lint run
+test-rust-lint:
+	$(CARGO) clippy --all-targets --locked -- -D warnings
+
+test-rust-fmt:
+	$(CARGO) fmt --check
 
 test-bash:
 	bash ./test/direnv-test.bash
@@ -180,42 +166,28 @@ install: all ## Install direnv to PREFIX (default: /usr/local)
 dist: ## Build cross-platform binaries
 	@mkdir -p $(DISTDIR)
 	@echo "Building cross-platform binaries..."
-	@platforms=" \
-		darwin/amd64 \
-		darwin/arm64 \
-		freebsd/386 \
-		freebsd/amd64 \
-		freebsd/arm \
-		linux/386 \
-		linux/amd64 \
-		linux/arm \
-		linux/arm64 \
-		linux/mips \
-		linux/mips64 \
-		linux/mips64le \
-		linux/mipsle \
-		linux/ppc64 \
-		linux/ppc64le \
-		linux/s390x \
-		netbsd/386 \
-		netbsd/amd64 \
-		netbsd/arm \
-		openbsd/386 \
-		openbsd/amd64 \
-		windows/386 \
-		windows/amd64 \
-		windows/arm64 \
+	@targets=" \
+		aarch64-apple-darwin \
+		x86_64-apple-darwin \
+		aarch64-unknown-linux-gnu \
+		arm-unknown-linux-gnueabi \
+		i686-unknown-linux-gnu \
+		powerpc64-unknown-linux-gnu \
+		powerpc64le-unknown-linux-gnu \
+		s390x-unknown-linux-gnu \
+		x86_64-unknown-freebsd \
+		x86_64-unknown-linux-gnu \
+		x86_64-unknown-netbsd \
+		aarch64-pc-windows-msvc \
+		i686-pc-windows-msvc \
+		x86_64-pc-windows-msvc \
 	"; \
-	for platform in $$platforms; do \
-		os=$${platform%/*}; \
-		arch=$${platform#*/}; \
-		echo "Building for $$os/$$arch..."; \
+	for target in $$targets; do \
+		echo "Building for $$target..."; \
 		suffix=""; \
-		if [ "$$os" = "windows" ]; then \
-			suffix=".exe"; \
-		fi; \
-		CGO_ENABLED=0 GOFLAGS="-trimpath" GOOS=$$os GOARCH=$$arch \
-			$(GO) build -ldflags="-s -w" -o "$(DISTDIR)/direnv.$$os-$$arch$$suffix"; \
+		case "$$target" in *windows*) suffix=".exe";; esac; \
+		$(CARGO) build --release --locked --target "$$target" || continue; \
+		cp "target/$$target/release/direnv$$suffix" "$(DISTDIR)/direnv.$$target$$suffix"; \
 	done
 
 .PHONY: prepare-release

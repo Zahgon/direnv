@@ -1,8 +1,8 @@
 # Development
 
-Setup a go environment https://golang.org/doc/install
+Setup a Rust environment https://www.rust-lang.org/tools/install
 
-> go >= 1.24 is required
+> Rust >= 1.88 (stable) is required
 
 Clone the project:
 
@@ -25,9 +25,7 @@ Or to a different location like `~/.local`:
 
     $ make install PREFIX=~/.local
 
-## Updating gomod2nix.toml
+## Lints
 
-Execute `./script/update-gomod2nix`; if you don't have nix locally, can
-do so via a docker container like so:
-
-    $ docker run -it --platform linux/amd64 -v $(pwd):/workdir nixos/nix /bin/sh -c "cd workdir && ./script/update-gomod2nix"
+`make test` runs `cargo clippy --all-targets -- -D warnings` and
+`cargo fmt --check` alongside the test suite; both must be clean.
